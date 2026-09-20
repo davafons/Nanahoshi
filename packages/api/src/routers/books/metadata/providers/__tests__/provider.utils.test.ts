@@ -3,12 +3,58 @@ import sharp from "sharp";
 import {
 	deriveIsbnPair,
 	extractIsbnFromText,
+	fetchPublicImage,
 	isbn10To13,
 	isbn13To10,
 	isUsableRemoteCover,
 	normalizePublishedDate,
 	stripHtml,
 } from "../provider.utils";
+
+describe("fetchPublicImage", () => {
+	test("follows public redirects", async () => {
+		const originalFetch = globalThis.fetch;
+		const requests: string[] = [];
+		globalThis.fetch = (async (input) => {
+			const url = String(input);
+			requests.push(url);
+			return url === "https://covers.openlibrary.org/cover.jpg"
+				? new Response(null, {
+						status: 302,
+						headers: { location: "https://archive.org/download/cover.jpg" },
+					})
+				: new Response("image", { status: 200 });
+		}) as typeof fetch;
+		try {
+			const result = await fetchPublicImage(
+				"https://covers.openlibrary.org/cover.jpg",
+			);
+			expect(result.url).toBe("https://archive.org/download/cover.jpg");
+			expect(requests).toEqual([
+				"https://covers.openlibrary.org/cover.jpg",
+				"https://archive.org/download/cover.jpg",
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("rejects an unsafe redirect destination", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response(null, {
+				status: 302,
+				headers: { location: "http://127.0.0.1:8080/admin" },
+			})) as typeof fetch;
+		try {
+			await expect(
+				fetchPublicImage("https://covers.openlibrary.org/cover.jpg"),
+			).rejects.toThrow("unsafe cover URL");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+});
 
 // ─── ISBN-10 ↔ ISBN-13 ──────────────────────────────────
 

@@ -13,6 +13,8 @@ export { isbn10To13, isbn13To10 };
 
 const log = logger.child({ component: "provider-utils" });
 
+const MAX_REMOTE_IMAGE_REDIRECTS = 5;
+
 // ─── Transient failures ──────────────────────────────────
 // "The provider couldn't answer" (429/5xx/network) is not "no data": the
 // enrichment chain must NOT mark the book as enriched, so the gap is retried
@@ -153,6 +155,36 @@ export async function hydratedProviderResult<
 // ─── Cover download ──────────────────────────────────────
 // Shared by all providers.
 
+/**
+ * Fetches a public image while validating every redirect destination.
+ * Providers commonly return CDN URLs that redirect to the actual image, but
+ * following redirects blindly would weaken the SSRF guard.
+ */
+export async function fetchPublicImage(
+	imageUrl: string,
+	options?: { headers?: Record<string, string> },
+): Promise<{ response: Response; url: string }> {
+	let currentUrl = imageUrl;
+	for (let redirectCount = 0; ; redirectCount++) {
+		if (!isSafePublicUrl(currentUrl)) {
+			throw new Error(`Refusing to fetch unsafe cover URL: ${currentUrl}`);
+		}
+		const response = await fetch(currentUrl, {
+			redirect: "manual",
+			headers: options?.headers,
+		});
+		if (response.status < 300 || response.status >= 400) {
+			return { response, url: currentUrl };
+		}
+		if (redirectCount >= MAX_REMOTE_IMAGE_REDIRECTS) {
+			throw new Error("Too many redirects while fetching cover");
+		}
+		const location = response.headers.get("location");
+		if (!location) throw new Error("Cover redirect has no location");
+		currentUrl = new URL(location, currentUrl).toString();
+	}
+}
+
 /** Downloads a remote cover into data/covers/<uuid><ext>; returns the cwd-relative path or null. */
 export async function downloadCoverImage(
 	imageUrl: string,
@@ -164,10 +196,7 @@ export async function downloadCoverImage(
 			log.warn({ imageUrl }, "Refusing to fetch cover from unsafe URL");
 			return null;
 		}
-		const response = await fetch(imageUrl, {
-			redirect: "error",
-			headers: options?.headers,
-		});
+		const { response, url: finalUrl } = await fetchPublicImage(imageUrl, options);
 		if (!response.ok) return null;
 
 		const contentLength = Number(response.headers.get("content-length"));
@@ -183,7 +212,7 @@ export async function downloadCoverImage(
 		if (!(await isUsableRemoteCover(buffer))) return null;
 
 		// Acquire only — the cover-ingest worker normalises it off the scan path.
-		const urlExt = path.extname(new URL(imageUrl).pathname);
+		const urlExt = path.extname(new URL(finalUrl).pathname);
 		return await acquireCover(buffer, uuid, urlExt);
 	} catch (error) {
 		log.warn({ err: error }, "Cover download failed");
