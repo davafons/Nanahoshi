@@ -168,6 +168,14 @@ COPY --chmod=755 docker/s6/worker-run /etc/services.d/worker/run
 COPY --chmod=755 docker/s6/finish /etc/services.d/api/finish
 COPY --chmod=755 docker/s6/finish /etc/services.d/worker/finish
 COPY --chmod=755 docker/s6/healthcheck /usr/local/bin/nanahoshi-healthcheck
+# qTower's Docker engine accepts COPY --chmod but does not retain the mode
+# reliably in the resulting image. Enforce executable service hooks explicitly.
+RUN chmod 0755 \
+	/etc/services.d/api/run \
+	/etc/services.d/worker/run \
+	/etc/services.d/api/finish \
+	/etc/services.d/worker/finish \
+	/usr/local/bin/nanahoshi-healthcheck
 RUN chown nanahoshi:nanahoshi /run
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2 S6_SERVICES_GRACETIME=30000
 USER nanahoshi

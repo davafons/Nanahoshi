@@ -1,29 +1,83 @@
+x-davafons-managed-deployment:
+  guard: ${DAVAFONS_ANSIBLE_MANAGED_COMPOSE:?Deploy this stack through Ansible}
+
 name: nanahoshi
 
 services:
   server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nanahoshi-server
     stop_grace_period: 40s
-    image: ghcr.io/natsume-197/nanahoshi:latest
     restart: unless-stopped
-    env_file: .env
-    ports: ["${APP_PORT:-7331}:3000"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      APP_PORT: ${APP_PORT:-3030}
+      APP_URL: ${APP_URL:?Set APP_URL in .env.yaml}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN in .env.yaml}
+      SERVER_URL: ${SERVER_URL:?Set SERVER_URL in .env.yaml}
+      VITE_SERVER_URL: ${VITE_SERVER_URL:-}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-}
+      NAMESPACE_UUID: ${NAMESPACE_UUID:?Set NAMESPACE_UUID in .env.yaml}
+      DOWNLOAD_SECRET: ${DOWNLOAD_SECRET:?Set DOWNLOAD_SECRET in .env.yaml}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env.yaml}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env.yaml}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_NAME: ${DB_NAME:-nanahoshi}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.yaml}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.yaml}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      POSTHOG_PROJECT_TOKEN: ${POSTHOG_PROJECT_TOKEN:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
+      MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+      MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+    ports: ["127.0.0.1:${APP_PORT:-3030}:3000"]
     volumes:
-      - server_data:/app/apps/server/data
-      - ./books:/books:ro
+      - /mnt/cache/appdata/nanahoshi/server-data:/app/apps/server/data
+      - /mnt/user/Media/Books/Calibre:/books/calibre:ro
+      - /mnt/user/Media/Books/Import:/books/import
+      - /mnt/user/Media/Comics/English:/books/manga-english:ro
+      - /mnt/user/Media/Comics/Japanese:/books/manga-japanese:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
 
   postgres:
     image: groonga/pgroonga:4.0.8-alpine-18
+    container_name: nanahoshi-postgres
     restart: unless-stopped
-    shm_size: 256mb
-    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "jit=off"]
+    shm_size: 512mb
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=6GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - jit=off
     environment:
       POSTGRES_DB: ${DB_NAME:-nanahoshi}
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
-    volumes: ["postgres_data:/var/lib/postgresql"]
+    volumes:
+      - /mnt/cache/appdata/nanahoshi/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
@@ -32,18 +86,15 @@ services:
 
   redis:
     image: redis:8.10.1-alpine
+    container_name: nanahoshi-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
-    volumes: ["redis_data:/data"]
+    volumes:
+      - /mnt/cache/appdata/nanahoshi/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
-
-volumes:
-  postgres_data:
-  server_data:
-  redis_data:
